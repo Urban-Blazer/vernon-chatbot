@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         "/news-archive/",
         "/news-events/news-archive/",
     ]
-    include_news_archive: bool = False
+    include_news_archive: bool = True
 
     # Chunking
     chunk_size: int = 400
@@ -71,6 +71,11 @@ class Settings(BaseSettings):
 
     # Topic routing
     topic_routing_enabled: bool = True
+
+    # Council meeting transcription
+    council_meetings_enabled: bool = True
+    whisper_model_size: str = "small"
+    escribe_portal_url: str = "https://pub-vernon.escribemeetings.com"
 
     # Server
     cors_origins: list[str] = ["http://localhost:3000"]

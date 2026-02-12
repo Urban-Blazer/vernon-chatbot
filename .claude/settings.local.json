@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.vernon.ca)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl:*)"
+    ]
+  }
+}

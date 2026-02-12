@@ -10,6 +10,7 @@ import HourlyChart from "./components/HourlyChart";
 import TopicDistribution from "./components/TopicDistribution";
 import DocumentUpload from "./components/DocumentUpload";
 import AuditLog from "./components/AuditLog";
+import CouncilMeetings from "./components/CouncilMeetings";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -117,6 +118,9 @@ export default function AdminPage() {
             <CrawlStatus adminFetch={adminFetch} />
             <DocumentUpload adminFetch={adminFetch} />
           </div>
+
+          {/* Council meetings */}
+          <CouncilMeetings adminFetch={adminFetch} />
 
           {/* Conversations */}
           <ConversationList adminFetch={adminFetch} />

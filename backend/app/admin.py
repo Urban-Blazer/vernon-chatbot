@@ -349,3 +349,176 @@ async def delete_document(filename: str):
         response_cache.invalidate()
 
     return {"status": "ok", "chunks_removed": deleted}
+
+
+# --- Council meeting endpoints ---
+
+@admin_router.get("/meetings", dependencies=[Depends(verify_admin_key)])
+async def list_meetings(
+    status: str | None = Query(default=None),
+    meeting_type: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+):
+    from app.main import db_session_factory
+    from app.database import CouncilMeeting
+
+    db = db_session_factory()
+    try:
+        query = db.query(CouncilMeeting)
+        if status:
+            query = query.filter(CouncilMeeting.status == status)
+        if meeting_type:
+            query = query.filter(CouncilMeeting.meeting_type == meeting_type)
+
+        total = query.count()
+        meetings = (
+            query.order_by(CouncilMeeting.meeting_date.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
+
+        return {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "meetings": [
+                {
+                    "id": m.id,
+                    "escribe_id": m.escribe_id,
+                    "title": m.title,
+                    "meeting_type": m.meeting_type,
+                    "meeting_date": m.meeting_date.isoformat() if m.meeting_date else None,
+                    "status": m.status,
+                    "has_video": bool(m.video_url),
+                    "has_transcription": bool(m.transcription),
+                    "has_summary": bool(m.executive_summary),
+                    "error_message": m.error_message,
+                    "processing_started_at": m.processing_started_at.isoformat() if m.processing_started_at else None,
+                    "processing_completed_at": m.processing_completed_at.isoformat() if m.processing_completed_at else None,
+                }
+                for m in meetings
+            ],
+        }
+    finally:
+        db.close()
+
+
+@admin_router.get("/meetings/processing-status", dependencies=[Depends(verify_admin_key)])
+async def meeting_processing_status():
+    from app.meeting_worker import get_processing_status
+    return get_processing_status()
+
+
+@admin_router.get("/meetings/{meeting_id}", dependencies=[Depends(verify_admin_key)])
+async def get_meeting_detail(meeting_id: int):
+    from app.main import db_session_factory
+    from app.database import CouncilMeeting
+    import json
+
+    db = db_session_factory()
+    try:
+        meeting = db.query(CouncilMeeting).get(meeting_id)
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        return {
+            "id": meeting.id,
+            "escribe_id": meeting.escribe_id,
+            "title": meeting.title,
+            "meeting_type": meeting.meeting_type,
+            "meeting_date": meeting.meeting_date.isoformat() if meeting.meeting_date else None,
+            "video_url": meeting.video_url,
+            "status": meeting.status,
+            "executive_summary": meeting.executive_summary,
+            "action_items": json.loads(meeting.action_items_json) if meeting.action_items_json else None,
+            "transcription_preview": meeting.transcription[:2000] if meeting.transcription else None,
+            "transcription_length": len(meeting.transcription) if meeting.transcription else 0,
+            "error_message": meeting.error_message,
+            "processing_started_at": meeting.processing_started_at.isoformat() if meeting.processing_started_at else None,
+            "processing_completed_at": meeting.processing_completed_at.isoformat() if meeting.processing_completed_at else None,
+        }
+    finally:
+        db.close()
+
+
+@admin_router.post("/meetings/discover", dependencies=[Depends(verify_admin_key)])
+async def discover_meetings():
+    from app.main import db_session_factory
+    from app.database import CouncilMeeting
+    from app.council_scraper import EScribeScraper
+    from app.audit import log_audit
+
+    settings = get_settings()
+    scraper = EScribeScraper(portal_url=settings.escribe_portal_url)
+    discovered = scraper.discover_meetings()
+
+    db = db_session_factory()
+    try:
+        added = 0
+        for m_data in discovered:
+            existing = db.query(CouncilMeeting).filter_by(escribe_id=m_data.escribe_id).first()
+            if not existing:
+                meeting = CouncilMeeting(
+                    escribe_id=m_data.escribe_id,
+                    title=m_data.title,
+                    meeting_type=m_data.meeting_type,
+                    meeting_date=m_data.meeting_date,
+                    video_url=m_data.video_url,
+                    agenda_url=m_data.agenda_url,
+                    minutes_url=m_data.minutes_url,
+                    status="pending",
+                )
+                db.add(meeting)
+                added += 1
+        db.commit()
+
+        log_audit(db, "meetings_discovered", metadata={
+            "total_discovered": len(discovered),
+            "new_added": added,
+            "with_video": sum(1 for m in discovered if m.video_url),
+        })
+
+        return {
+            "total_discovered": len(discovered),
+            "new_added": added,
+            "with_video": sum(1 for m in discovered if m.video_url),
+        }
+    finally:
+        db.close()
+
+
+@admin_router.post("/meetings/process-all", dependencies=[Depends(verify_admin_key)])
+async def trigger_process_all_meetings():
+    from app.meeting_worker import meeting_processing_active, process_all_meetings
+    from app.main import db_session_factory, vector_store
+
+    if meeting_processing_active:
+        raise HTTPException(status_code=409, detail="Meeting processing already in progress")
+
+    settings = get_settings()
+    process_all_meetings(
+        db_session_factory=db_session_factory,
+        vector_store=vector_store,
+        whisper_model=settings.whisper_model_size,
+    )
+    return {"status": "started", "message": "Meeting processing started in background"}
+
+
+@admin_router.post("/meetings/{meeting_id}/process", dependencies=[Depends(verify_admin_key)])
+async def trigger_process_single_meeting(meeting_id: int):
+    from app.meeting_worker import meeting_processing_active, process_single_meeting
+    from app.main import db_session_factory, vector_store
+
+    if meeting_processing_active:
+        raise HTTPException(status_code=409, detail="Meeting processing already in progress")
+
+    settings = get_settings()
+    process_single_meeting(
+        meeting_id=meeting_id,
+        db_session_factory=db_session_factory,
+        vector_store=vector_store,
+        whisper_model=settings.whisper_model_size,
+    )
+    return {"status": "started", "message": f"Processing meeting {meeting_id}"}

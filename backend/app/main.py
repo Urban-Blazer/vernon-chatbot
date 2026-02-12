@@ -22,7 +22,7 @@ from app.cache import ResponseCache
 from app.config import get_settings
 from app.crawl_metadata import CrawlMetadataStore
 from app.database import (
-    AuditLog, AnalyticsEvent, ChatSession, ConversationMessage, Feedback, init_db,
+    AuditLog, AnalyticsEvent, ChatSession, CouncilMeeting, ConversationMessage, Feedback, init_db,
 )
 from app.chunker import chunk_text
 from app.pdf_parser import parse_pdf

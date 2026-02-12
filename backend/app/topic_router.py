@@ -84,6 +84,20 @@ DEPARTMENTS = {
         ),
         "label": {"en": "Waste & Recycling", "fr": "Dechets et recyclage"},
     },
+    "council_meetings": {
+        "keywords": [
+            r"\bcouncil\b", r"\bmeeting\b", r"\bminutes\b", r"\bagenda\b",
+            r"\bmotion\b", r"\bpublic\s+hearing", r"\bcommittee\s+of\s+the\s+whole",
+            r"\bcow\b", r"\bresolution\b", r"\bcouncillor\b", r"\bmayor\b",
+            r"\belected\b", r"\bvot\w+", r"\bdeliberat",
+        ],
+        "prompt_addition": (
+            "This question may relate to council meetings, agendas, or decisions. "
+            "If council meeting transcriptions are available in the context, cite specific "
+            "meeting dates and decisions. Focus on motions, resolutions, and directives."
+        ),
+        "label": {"en": "Council & Governance", "fr": "Conseil et gouvernance"},
+    },
     "general": {
         "keywords": [],
         "prompt_addition": "",

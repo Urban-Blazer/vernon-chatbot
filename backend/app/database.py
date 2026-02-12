@@ -78,6 +78,27 @@ class AuditLog(Base):
     metadata_json = Column(Text, nullable=True)
 
 
+class CouncilMeeting(Base):
+    __tablename__ = "council_meetings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    escribe_id = Column(String(100), unique=True, index=True)
+    title = Column(String(500))
+    meeting_type = Column(String(100))
+    meeting_date = Column(DateTime, index=True)
+    video_url = Column(Text, nullable=True)
+    agenda_url = Column(Text, nullable=True)
+    minutes_url = Column(Text, nullable=True)
+    transcription = Column(Text, nullable=True)
+    executive_summary = Column(Text, nullable=True)
+    action_items_json = Column(Text, nullable=True)
+    status = Column(String(20), default="pending", index=True)
+    error_message = Column(Text, nullable=True)
+    processing_started_at = Column(DateTime, nullable=True)
+    processing_completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def init_db(database_url: str):
     """Create engine, tables, and return a session factory."""
     engine = create_engine(
