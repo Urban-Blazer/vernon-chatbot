@@ -45,6 +45,7 @@ class WebScraper:
     concurrency: int = 10
     timeout: int = 15
     use_sitemap: bool = True
+    ingest_pdfs: bool = True
     exclude_patterns: list[str] = field(default_factory=list)
     _session: requests.Session = field(default=None, init=False, repr=False)
     progress: CrawlProgress = field(default_factory=CrawlProgress)
@@ -178,6 +179,24 @@ class WebScraper:
 
         return None
 
+    def _fetch_pdf(self, url: str) -> ScrapedPage | None:
+        """Download and parse a PDF URL."""
+        try:
+            from app.pdf_parser import parse_pdf_from_url
+            response = self._session.get(url, timeout=self.timeout)
+            response.raise_for_status()
+            return parse_pdf_from_url(response.content, url)
+        except Exception as e:
+            logger.debug(f"Failed to fetch PDF {url}: {e}")
+            self.progress.failed += 1
+            return None
+
+    def _fetch_url(self, url: str) -> ScrapedPage | None:
+        """Route to appropriate fetcher based on URL type."""
+        if self.ingest_pdfs and url.lower().endswith(".pdf"):
+            return self._fetch_pdf(url)
+        return self._fetch_page(url)
+
     # --- Main Crawl Methods ---
 
     def crawl(self) -> list[ScrapedPage]:
@@ -219,7 +238,7 @@ class WebScraper:
         pages: list[ScrapedPage] = []
 
         with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
-            future_to_url = {executor.submit(self._fetch_page, url): url for url in filtered}
+            future_to_url = {executor.submit(self._fetch_url, url): url for url in filtered}
 
             for future in as_completed(future_to_url):
                 self.progress.crawled += 1
@@ -255,21 +274,28 @@ class WebScraper:
             visited.add(url)
             logger.info(f"Crawling: {url} (depth={depth})")
 
-            page = self._fetch_page(url)
+            page = self._fetch_url(url)
             if page:
                 pages.append(page)
 
-            # Discover links for BFS
+            # Discover links for BFS (skip for PDF pages)
+            if url.lower().endswith(".pdf"):
+                time.sleep(self.delay)
+                continue
+
             try:
                 response = self._session.get(url, timeout=self.timeout)
                 if response.ok and "text/html" in response.headers.get("content-type", ""):
                     soup = BeautifulSoup(response.text, "html.parser")
+                    skip_exts = (".jpg", ".png", ".gif", ".zip")
+                    if not self.ingest_pdfs:
+                        skip_exts = (".pdf",) + skip_exts
                     for a_tag in soup.find_all("a", href=True):
                         href = a_tag["href"]
                         full_url = self._normalize_url(urljoin(url, href))
                         if (full_url not in visited
                                 and self._is_same_domain(full_url)
-                                and not full_url.endswith((".pdf", ".jpg", ".png", ".gif", ".zip"))):
+                                and not full_url.endswith(skip_exts)):
                             queue.append((full_url, depth + 1))
             except requests.RequestException:
                 pass

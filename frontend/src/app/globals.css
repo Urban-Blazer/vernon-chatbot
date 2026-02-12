@@ -40,3 +40,44 @@ body {
 .markdown-content strong {
   font-weight: 600;
 }
+
+/* WCAG 2.1 AA: Focus indicators for all interactive elements */
+:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* WCAG 2.1 AA: High contrast mode support */
+@media (prefers-contrast: high) {
+  .bg-gray-100 {
+    background-color: #ffffff;
+    border: 2px solid #000000;
+  }
+  .text-gray-400,
+  .text-gray-500,
+  .text-gray-600 {
+    color: #000000;
+  }
+  .border-gray-200,
+  .border-gray-300 {
+    border-color: #000000;
+  }
+  .bg-blue-600 {
+    background-color: #0000cc;
+  }
+  .text-white\/70,
+  .text-white\/40 {
+    color: #ffffff;
+  }
+}
+
+/* Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

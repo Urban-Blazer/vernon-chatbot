@@ -31,5 +31,8 @@ frontend/out/
 .DS_Store
 Thumbs.db
 
+# SQLite
+*.db
+
 # Logs
 *.log

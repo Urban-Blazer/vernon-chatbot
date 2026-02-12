@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useLanguage } from "../i18n/LanguageContext";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -8,6 +9,7 @@ interface ChatInputProps {
 }
 
 export default function ChatInput({ onSend, disabled }: ChatInputProps) {
+  const { t } = useLanguage();
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -22,7 +24,6 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
     if (!trimmed || disabled) return;
     onSend(trimmed);
     setInput("");
-    // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -37,7 +38,6 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
-    // Auto-resize
     const textarea = e.target;
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
@@ -51,9 +51,10 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
           value={input}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Type your question..."
+          placeholder={t("placeholder")}
           disabled={disabled}
           rows={1}
+          aria-label={t("placeholder")}
           className="flex-1 resize-none rounded-xl border border-gray-300 px-4 py-2.5 text-sm
                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
                      disabled:opacity-50 disabled:cursor-not-allowed
@@ -62,17 +63,19 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
         <button
           onClick={handleSubmit}
           disabled={disabled || !input.trim()}
+          aria-label={t("send")}
           className="bg-blue-600 text-white rounded-xl px-4 py-2.5 text-sm font-medium
                      hover:bg-blue-700 transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed
                      flex-shrink-0"
         >
-          Send
+          {t("send")}
         </button>
       </div>
-      <p className="text-xs text-gray-400 mt-2 text-center">
-        Powered by AI — responses are based on our website content
-      </p>
+      <div className="mt-2 text-center space-y-0.5">
+        <p className="text-xs text-gray-400">{t("poweredBy")}</p>
+        <p className="text-xs text-gray-400">{t("privacyNotice")}</p>
+      </div>
     </div>
   );
 }

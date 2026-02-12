@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     target_url: str = "https://vernon.ca"
     chroma_path: str = "./chroma_data"
 
+    # Database
+    database_url: str = "sqlite:///./vernon_chatbot.db"
+
     # Crawl settings — tuned for large municipal sites
     max_crawl_pages: int = 2000
     max_crawl_depth: int = 10
@@ -16,12 +19,10 @@ class Settings(BaseSettings):
     use_sitemap: bool = True
 
     # URL patterns to skip (regex-compatible strings)
-    # News archive is bulk content with low customer-service value
     exclude_patterns: list[str] = [
         "/news-archive/",
         "/news-events/news-archive/",
     ]
-    # Set to True to include news archive pages (adds ~1100 pages)
     include_news_archive: bool = False
 
     # Chunking
@@ -32,6 +33,44 @@ class Settings(BaseSettings):
     embedding_model: str = "all-MiniLM-L6-v2"
     claude_model: str = "claude-sonnet-4-5-20250929"
     top_k_results: int = 5
+
+    # Rate limiting
+    rate_limit: str = "30/minute"
+    rate_limit_chat: str = "10/minute"
+
+    # Privacy & data retention
+    data_retention_days: int = 90
+    max_message_length: int = 2000
+
+    # Bilingual
+    default_language: str = "en"
+
+    # Caching
+    cache_ttl_seconds: int = 3600
+    cache_max_size: int = 500
+
+    # Scheduled recrawl
+    recrawl_enabled: bool = False
+    recrawl_cron_hour: int = 2
+    recrawl_cron_minute: int = 0
+
+    # Admin
+    admin_api_key: str = ""
+
+    # Confidence
+    confidence_threshold: float = 0.65
+
+    # Human handoff
+    handoff_email: str = ""
+    handoff_phone: str = ""
+    handoff_url: str = "https://www.vernon.ca/contact-us"
+    handoff_summary_enabled: bool = True
+
+    # PDF ingestion
+    ingest_pdfs: bool = True
+
+    # Topic routing
+    topic_routing_enabled: bool = True
 
     # Server
     cors_origins: list[str] = ["http://localhost:3000"]

@@ -9,6 +9,7 @@ services:
       - ./backend/.env
     volumes:
       - chroma_data:/app/chroma_data
+      - sqlite_data:/app/data
     restart: unless-stopped
 
   frontend:
@@ -25,3 +26,4 @@ services:
 
 volumes:
   chroma_data:
+  sqlite_data:
