@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings
+from app.crawl_metadata import CrawlMetadataStore
 from app.scraper import WebScraper
 from app.chunker import chunk_text
 from app.vectorstore import VectorStore
@@ -20,19 +21,22 @@ logger = logging.getLogger(__name__)
 # Global state
 vector_store: VectorStore | None = None
 rag_pipeline: RAGPipeline | None = None
+crawl_metadata: CrawlMetadataStore | None = None
 last_crawl_time: str | None = None
 crawl_in_progress = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global vector_store, rag_pipeline
+    global vector_store, rag_pipeline, crawl_metadata
     settings = get_settings()
 
     vector_store = VectorStore(
         persist_dir=settings.chroma_path,
         embedding_model=settings.embedding_model,
     )
+
+    crawl_metadata = CrawlMetadataStore(storage_dir=settings.chroma_path)
 
     if settings.anthropic_api_key:
         rag_pipeline = RAGPipeline(
@@ -72,12 +76,48 @@ class ChatResponse(BaseModel):
 
 class IngestRequest(BaseModel):
     url: str | None = None
+    full: bool = False  # True = full re-crawl, False = incremental
 
 
 class IngestResponse(BaseModel):
     pages_crawled: int
     chunks_stored: int
+    pages_added: int
+    pages_updated: int
+    pages_removed: int
+    pages_unchanged: int
     message: str
+
+
+# --- Helpers ---
+
+def _build_scraper(target_url: str) -> WebScraper:
+    settings = get_settings()
+    exclude = settings.exclude_patterns if not settings.include_news_archive else []
+    return WebScraper(
+        base_url=target_url,
+        max_pages=settings.max_crawl_pages,
+        max_depth=settings.max_crawl_depth,
+        delay=settings.crawl_delay,
+        concurrency=settings.crawl_concurrency,
+        timeout=settings.crawl_timeout,
+        use_sitemap=settings.use_sitemap,
+        exclude_patterns=exclude,
+    )
+
+
+def _chunk_and_ingest(pages, settings) -> int:
+    all_chunks = []
+    for page in pages:
+        chunks = chunk_text(
+            text=page.content,
+            source_url=page.url,
+            title=page.title,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
+        all_chunks.extend(chunks)
+    return vector_store.ingest(all_chunks) if all_chunks else 0
 
 
 # --- Endpoints ---
@@ -91,6 +131,7 @@ async def health():
 async def status():
     return {
         "knowledge_base_chunks": vector_store.count() if vector_store else 0,
+        "tracked_pages": len(crawl_metadata.records) if crawl_metadata else 0,
         "last_crawl_time": last_crawl_time,
         "crawl_in_progress": crawl_in_progress,
         "llm_configured": rag_pipeline is not None,
@@ -113,50 +154,122 @@ async def ingest(request: IngestRequest | None = None):
             detail="No target URL provided. Set TARGET_URL env var or pass url in request body.",
         )
 
+    is_full = request.full if request else False
+    # If no metadata exists yet, force a full crawl
+    if not crawl_metadata.records:
+        is_full = True
+
     crawl_in_progress = True
     try:
-        # Clear existing data
-        vector_store.clear()
-
-        # Crawl website
-        exclude = settings.exclude_patterns if not settings.include_news_archive else []
-        scraper = WebScraper(
-            base_url=target_url,
-            max_pages=settings.max_crawl_pages,
-            max_depth=settings.max_crawl_depth,
-            delay=settings.crawl_delay,
-            concurrency=settings.crawl_concurrency,
-            timeout=settings.crawl_timeout,
-            use_sitemap=settings.use_sitemap,
-            exclude_patterns=exclude,
-        )
+        scraper = _build_scraper(target_url)
         pages = scraper.crawl()
 
         if not pages:
             raise HTTPException(status_code=400, detail=f"No content found at {target_url}")
 
-        # Chunk and ingest
-        all_chunks = []
-        for page in pages:
-            chunks = chunk_text(
-                text=page.content,
-                source_url=page.url,
-                title=page.title,
-                chunk_size=settings.chunk_size,
-                chunk_overlap=settings.chunk_overlap,
-            )
-            all_chunks.extend(chunks)
-
-        num_stored = vector_store.ingest(all_chunks)
-        last_crawl_time = datetime.now(timezone.utc).isoformat()
-
-        return IngestResponse(
-            pages_crawled=len(pages),
-            chunks_stored=num_stored,
-            message=f"Successfully ingested {len(pages)} pages ({num_stored} chunks) from {target_url}",
-        )
+        if is_full:
+            return _full_ingest(pages, settings, target_url)
+        else:
+            return _incremental_ingest(pages, settings, target_url)
     finally:
         crawl_in_progress = False
+
+
+def _full_ingest(pages, settings, target_url: str) -> IngestResponse:
+    """Clear everything and re-ingest from scratch."""
+    global last_crawl_time
+
+    vector_store.clear()
+    crawl_metadata.clear()
+
+    num_stored = _chunk_and_ingest(pages, settings)
+
+    # Update metadata for all pages
+    for page in pages:
+        crawl_metadata.update(page.url, page.content_hash, page.title)
+    crawl_metadata.save()
+
+    last_crawl_time = datetime.now(timezone.utc).isoformat()
+
+    return IngestResponse(
+        pages_crawled=len(pages),
+        chunks_stored=num_stored,
+        pages_added=len(pages),
+        pages_updated=0,
+        pages_removed=0,
+        pages_unchanged=0,
+        message=f"Full ingest: {len(pages)} pages ({num_stored} chunks) from {target_url}",
+    )
+
+
+def _incremental_ingest(pages, settings, target_url: str) -> IngestResponse:
+    """Only update pages that changed, add new ones, remove deleted ones."""
+    global last_crawl_time
+
+    crawled_urls = {page.url for page in pages}
+    previously_known = crawl_metadata.get_all_urls()
+
+    added = []
+    updated = []
+    unchanged = []
+
+    for page in pages:
+        old_hash = crawl_metadata.get_hash(page.url)
+
+        if old_hash is None:
+            # New page
+            added.append(page)
+        elif old_hash != page.content_hash:
+            # Content changed
+            updated.append(page)
+        else:
+            # No change
+            unchanged.append(page)
+
+    # Pages that were in the DB but are no longer on the site
+    removed_urls = previously_known - crawled_urls
+
+    # 1. Remove deleted pages from vector store + metadata
+    if removed_urls:
+        vector_store.delete_by_urls(list(removed_urls))
+        for url in removed_urls:
+            crawl_metadata.remove(url)
+        logger.info(f"Removed {len(removed_urls)} deleted pages")
+
+    # 2. Remove old chunks for updated pages, then re-ingest
+    if updated:
+        vector_store.delete_by_urls([p.url for p in updated])
+        _chunk_and_ingest(updated, settings)
+        for page in updated:
+            crawl_metadata.update(page.url, page.content_hash, page.title)
+        logger.info(f"Updated {len(updated)} changed pages")
+
+    # 3. Ingest new pages
+    if added:
+        _chunk_and_ingest(added, settings)
+        for page in added:
+            crawl_metadata.update(page.url, page.content_hash, page.title)
+        logger.info(f"Added {len(added)} new pages")
+
+    crawl_metadata.save()
+    last_crawl_time = datetime.now(timezone.utc).isoformat()
+
+    total_modified = len(added) + len(updated)
+    chunks_stored = vector_store.count()
+
+    return IngestResponse(
+        pages_crawled=len(pages),
+        chunks_stored=chunks_stored,
+        pages_added=len(added),
+        pages_updated=len(updated),
+        pages_removed=len(removed_urls),
+        pages_unchanged=len(unchanged),
+        message=(
+            f"Incremental update: {len(added)} added, {len(updated)} updated, "
+            f"{len(removed_urls)} removed, {len(unchanged)} unchanged. "
+            f"Total chunks: {chunks_stored}"
+        ),
+    )
 
 
 @app.post("/api/chat")

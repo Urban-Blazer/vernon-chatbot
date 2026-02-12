@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import time
@@ -19,6 +20,11 @@ class ScrapedPage:
     url: str
     title: str
     content: str
+    content_hash: str = ""
+
+    def __post_init__(self):
+        if not self.content_hash and self.content:
+            self.content_hash = hashlib.sha256(self.content.encode()).hexdigest()
 
 
 @dataclass

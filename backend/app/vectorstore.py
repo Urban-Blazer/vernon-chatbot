@@ -64,6 +64,25 @@ class VectorStore:
 
         return matches
 
+    def delete_by_url(self, source_url: str) -> int:
+        """Delete all chunks associated with a specific source URL."""
+        # ChromaDB supports filtering by metadata
+        results = self.collection.get(
+            where={"source_url": source_url},
+        )
+        if results["ids"]:
+            self.collection.delete(ids=results["ids"])
+            logger.info(f"Deleted {len(results['ids'])} chunks for {source_url}")
+            return len(results["ids"])
+        return 0
+
+    def delete_by_urls(self, source_urls: list[str]) -> int:
+        """Delete all chunks for multiple source URLs."""
+        total = 0
+        for url in source_urls:
+            total += self.delete_by_url(url)
+        return total
+
     def clear(self):
         """Delete all data from the collection."""
         self.client.delete_collection("website_content")
