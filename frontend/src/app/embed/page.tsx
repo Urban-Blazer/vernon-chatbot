@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import ChatWidget from "../components/ChatWidget";
 import { useLanguage } from "../i18n/LanguageContext";
 
-export default function EmbedPage() {
+function EmbedContent() {
   const searchParams = useSearchParams();
   const { setLang } = useLanguage();
 
@@ -20,5 +20,13 @@ export default function EmbedPage() {
     <main className="h-screen w-screen overflow-hidden">
       <ChatWidget />
     </main>
+  );
+}
+
+export default function EmbedPage() {
+  return (
+    <Suspense>
+      <EmbedContent />
+    </Suspense>
   );
 }

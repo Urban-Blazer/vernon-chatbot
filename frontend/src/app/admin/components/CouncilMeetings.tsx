@@ -39,6 +39,8 @@ interface MeetingDetail {
   has_minutes_text: boolean;
   minutes_text_length: number;
   error_message: string | null;
+  processing_started_at: string | null;
+  processing_completed_at: string | null;
 }
 
 interface ActionItem {
