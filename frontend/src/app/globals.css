@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Scrollbar styling */
+.chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-messages::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+/* Markdown content styling */
+.markdown-content p {
+  margin-bottom: 0.5rem;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+.markdown-content ul,
+.markdown-content ol {
+  margin-left: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+.markdown-content li {
+  margin-bottom: 0.25rem;
+}
+.markdown-content a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.markdown-content strong {
+  font-weight: 600;
+}
