@@ -119,10 +119,16 @@ async def ingest(request: IngestRequest | None = None):
         vector_store.clear()
 
         # Crawl website
+        exclude = settings.exclude_patterns if not settings.include_news_archive else []
         scraper = WebScraper(
             base_url=target_url,
             max_pages=settings.max_crawl_pages,
             max_depth=settings.max_crawl_depth,
+            delay=settings.crawl_delay,
+            concurrency=settings.crawl_concurrency,
+            timeout=settings.crawl_timeout,
+            use_sitemap=settings.use_sitemap,
+            exclude_patterns=exclude,
         )
         pages = scraper.crawl()
 
