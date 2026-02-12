@@ -116,21 +116,18 @@ class EScribeScraper:
             doc_url = doc.get("Url", "")
             doc_type = doc.get("Type", "")
 
+            # Normalize relative URLs
+            if doc_url.startswith("./"):
+                doc_url = f"{self.portal_url}/{doc_url[2:]}"
+            elif doc_url and not doc_url.startswith("http"):
+                doc_url = f"{self.portal_url}/{doc_url}"
+
             if title == "Video" and doc_url:
-                # Convert relative URL: ./Players/ISI... -> full URL
-                if doc_url.startswith("./"):
-                    doc_url = f"{self.portal_url}/{doc_url[2:]}"
-                elif not doc_url.startswith("http"):
-                    doc_url = f"{self.portal_url}/{doc_url}"
                 video_url = doc_url
             elif doc_type == "Agenda" and doc.get("Format") == ".pdf" and not agenda_url:
                 agenda_url = doc_url
-                if not agenda_url.startswith("http"):
-                    agenda_url = f"{self.portal_url}/{agenda_url}"
-            elif doc_type == "Minutes" and doc.get("Format") == ".pdf" and not minutes_url:
+            elif doc_type == "PostMinutes" and doc.get("Format") == ".pdf" and not minutes_url:
                 minutes_url = doc_url
-                if not minutes_url.startswith("http"):
-                    minutes_url = f"{self.portal_url}/{minutes_url}"
 
         return DiscoveredMeeting(
             escribe_id=escribe_id,

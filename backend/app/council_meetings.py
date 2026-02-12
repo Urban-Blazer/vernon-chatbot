@@ -1,10 +1,12 @@
-"""Council meeting audio download, transcription, and summarization."""
+"""Council meeting audio download, transcription, summarization, and PDF ingestion."""
 
+import io
 import json
 import logging
 import subprocess
 
 import anthropic
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -153,3 +155,45 @@ def extract_action_items(
     except json.JSONDecodeError:
         logger.warning("Failed to parse action items JSON, wrapping raw text")
         return [{"description": raw, "assigned_to": None, "deadline": None, "status": "unknown"}]
+
+
+def download_meeting_pdf(url: str, timeout: int = 60) -> str | None:
+    """Download a PDF from a URL and extract its text content.
+
+    Returns the extracted text, or None if download/parsing fails.
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        logger.error("pypdf is not installed")
+        return None
+
+    try:
+        session = requests.Session()
+        session.verify = False  # eScribe portal has SSL cert issues
+        resp = session.get(url, timeout=timeout)
+        resp.raise_for_status()
+    except Exception as e:
+        logger.warning(f"Failed to download PDF from {url}: {e}")
+        return None
+
+    try:
+        reader = PdfReader(io.BytesIO(resp.content))
+    except Exception as e:
+        logger.warning(f"Failed to parse PDF from {url}: {e}")
+        return None
+
+    text_parts = []
+    for page in reader.pages:
+        try:
+            page_text = page.extract_text()
+            if page_text and page_text.strip():
+                text_parts.append(page_text.strip())
+        except Exception:
+            pass
+
+    if not text_parts:
+        logger.warning(f"No text extracted from PDF at {url}")
+        return None
+
+    return "\n\n".join(text_parts)

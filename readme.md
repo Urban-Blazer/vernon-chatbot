@@ -516,15 +516,16 @@ Timestamped record of all system actions. Filter by action type:
 
 ## Council Meeting Transcription
 
-The chatbot can automatically transcribe City of Vernon council meetings from the [eScribe portal](https://pub-vernon.escribemeetings.com), generate executive summaries, extract action items, and make meeting content searchable through the chatbot.
+The chatbot automatically ingests all council meeting data from the [eScribe portal](https://pub-vernon.escribemeetings.com) — including agenda PDFs, minutes PDFs, and video transcriptions. It covers all 11 meeting types (Regular Council, Committee of the Whole, Public Hearing, Special Meeting, Advisory Planning Committee, and more) with 231+ meetings spanning back to 2022.
 
 ### How It Works
 
-1. **Discovery** — The system queries the eScribe portal's calendar API to find all meetings with video recordings
-2. **Audio Download** — For each meeting, ffmpeg extracts audio from the HLS video stream as 16kHz mono WAV
-3. **Transcription** — faster-whisper (a local Whisper implementation) transcribes the audio on CPU
-4. **Summarization** — Claude generates an executive summary and extracts action items (motions, assignments, deadlines)
-5. **Indexing** — The transcription is chunked and stored in ChromaDB, making it searchable through the chatbot
+1. **Discovery** — The system queries the eScribe portal's calendar API to find all meetings across all types (not just video — also agendas and minutes)
+2. **PDF Ingestion** — Agenda and minutes PDFs are downloaded and their text extracted (228 agendas, 214 minutes documents)
+3. **Audio Download** — For meetings with video (11 meetings), ffmpeg extracts audio from the HLS video stream as 16kHz mono WAV
+4. **Transcription** — faster-whisper (a local Whisper implementation) transcribes the video audio on CPU
+5. **Summarization** — Claude generates an executive summary and extracts action items from the transcription (or from minutes text for meetings without video)
+6. **Indexing** — All content (transcriptions, agendas, minutes) is chunked and stored in ChromaDB, making it searchable through the chatbot
 
 ### Processing Times
 

@@ -11,6 +11,7 @@ from app.chunker import chunk_text
 from app.config import get_settings
 from app.council_meetings import (
     download_audio,
+    download_meeting_pdf,
     extract_action_items,
     generate_executive_summary,
     transcribe_audio,
@@ -134,9 +135,7 @@ def _run_full_processing(db_session_factory, vector_store, whisper_model: str):
     discovered = scraper.discover_meetings()
 
     with _processing_lock:
-        meeting_processing_status["total_meetings"] = len(
-            [m for m in discovered if m.video_url]
-        )
+        meeting_processing_status["total_meetings"] = len(discovered)
 
     # Step 2: Upsert to database
     db = db_session_factory()
@@ -161,13 +160,10 @@ def _run_full_processing(db_session_factory, vector_store, whisper_model: str):
                 db.add(meeting)
         db.commit()
 
-        # Get all pending meetings with video
+        # Get all pending meetings (video, PDF, or both)
         pending = (
             db.query(CouncilMeeting)
-            .filter(
-                CouncilMeeting.status.in_(["pending", "error"]),
-                CouncilMeeting.video_url.isnot(None),
-            )
+            .filter(CouncilMeeting.status.in_(["pending", "error"]))
             .order_by(CouncilMeeting.meeting_date.desc())
             .all()
         )
@@ -192,13 +188,32 @@ def _process_one_meeting(
     whisper_model: str,
     settings,
 ):
-    """Process a single meeting through the full pipeline."""
+    """Process a single meeting through the full pipeline.
+
+    Handles three cases:
+    - Video meetings: download audio -> transcribe -> summarize -> index + ingest PDFs
+    - PDF-only meetings: download agenda/minutes PDFs -> summarize from minutes -> index
+    - No content: skip (mark complete with no data)
+    """
     from app.database import CouncilMeeting
 
     db = db_session_factory()
+    audio_path = None
     try:
         meeting = db.query(CouncilMeeting).get(meeting_id)
-        if not meeting or not meeting.video_url:
+        if not meeting:
+            return
+
+        has_video = bool(meeting.video_url)
+        has_agenda = bool(meeting.agenda_url)
+        has_minutes = bool(meeting.minutes_url)
+
+        if not has_video and not has_agenda and not has_minutes:
+            meeting.status = "complete"
+            meeting.processing_completed_at = datetime.now(timezone.utc)
+            db.commit()
+            with _processing_lock:
+                meeting_processing_status["processed"] += 1
             return
 
         with _processing_lock:
@@ -209,73 +224,118 @@ def _process_one_meeting(
         meeting.error_message = None
         db.commit()
 
-        # Create temp file for audio
-        fd, audio_path = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
-
         try:
-            # Step 1: Get HLS URL
-            with _processing_lock:
-                meeting_processing_status["current_step"] = "downloading"
+            date_label = meeting.meeting_date.strftime('%Y-%m-%d') if meeting.meeting_date else 'unknown date'
+            source_url = f"council-meeting://{meeting.escribe_id}"
+            all_chunks = []
 
-            scraper = EScribeScraper(portal_url=settings.escribe_portal_url)
-            hls_url = scraper.get_hls_url(meeting.video_url)
-            if not hls_url:
-                raise ValueError(
-                    f"Could not determine HLS URL from {meeting.video_url}"
+            # --- Step 1: Download and parse agenda/minutes PDFs ---
+            with _processing_lock:
+                meeting_processing_status["current_step"] = "downloading_docs"
+
+            if has_agenda:
+                logger.info(f"Downloading agenda PDF for {meeting.title}")
+                agenda_text = download_meeting_pdf(meeting.agenda_url)
+                if agenda_text:
+                    meeting.agenda_text = agenda_text
+                    agenda_chunks = chunk_text(
+                        text=agenda_text,
+                        source_url=f"{source_url}/agenda",
+                        title=f"Agenda: {meeting.title} ({date_label})",
+                        chunk_size=settings.chunk_size,
+                        chunk_overlap=settings.chunk_overlap,
+                    )
+                    all_chunks.extend(agenda_chunks)
+                    logger.info(f"Agenda: {len(agenda_chunks)} chunks from {meeting.title}")
+
+            if has_minutes:
+                logger.info(f"Downloading minutes PDF for {meeting.title}")
+                minutes_text = download_meeting_pdf(meeting.minutes_url)
+                if minutes_text:
+                    meeting.minutes_text = minutes_text
+                    minutes_chunks = chunk_text(
+                        text=minutes_text,
+                        source_url=f"{source_url}/minutes",
+                        title=f"Minutes: {meeting.title} ({date_label})",
+                        chunk_size=settings.chunk_size,
+                        chunk_overlap=settings.chunk_overlap,
+                    )
+                    all_chunks.extend(minutes_chunks)
+                    logger.info(f"Minutes: {len(minutes_chunks)} chunks from {meeting.title}")
+
+            db.commit()
+
+            # --- Step 2: Video processing (if available) ---
+            if has_video:
+                with _processing_lock:
+                    meeting_processing_status["current_step"] = "downloading"
+
+                fd, audio_path = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+
+                scraper = EScribeScraper(portal_url=settings.escribe_portal_url)
+                hls_url = scraper.get_hls_url(meeting.video_url)
+                if not hls_url:
+                    raise ValueError(
+                        f"Could not determine HLS URL from {meeting.video_url}"
+                    )
+
+                success = download_audio(hls_url, audio_path)
+                if not success:
+                    raise RuntimeError("ffmpeg audio download failed")
+
+                # Transcribe
+                meeting.status = "transcribing"
+                db.commit()
+                with _processing_lock:
+                    meeting_processing_status["current_step"] = "transcribing"
+
+                transcription = transcribe_audio(audio_path, model_size=whisper_model)
+                meeting.transcription = transcription
+
+                # Index transcription
+                transcription_chunks = chunk_text(
+                    text=transcription,
+                    source_url=f"{source_url}/transcription",
+                    title=f"Council Meeting Transcription: {meeting.title} ({date_label})",
+                    chunk_size=settings.chunk_size,
+                    chunk_overlap=settings.chunk_overlap,
+                )
+                all_chunks.extend(transcription_chunks)
+
+            # --- Step 3: Summarize ---
+            # Use transcription if available, otherwise use minutes text
+            summary_source = meeting.transcription or meeting.minutes_text
+            if summary_source and settings.anthropic_api_key:
+                meeting.status = "summarizing"
+                db.commit()
+                with _processing_lock:
+                    meeting_processing_status["current_step"] = "summarizing"
+
+                meeting.executive_summary = generate_executive_summary(
+                    summary_source,
+                    meeting.title,
+                    api_key=settings.anthropic_api_key,
+                    model=settings.claude_model,
                 )
 
-            # Step 2: Download audio
-            success = download_audio(hls_url, audio_path)
-            if not success:
-                raise RuntimeError("ffmpeg audio download failed")
+                action_items = extract_action_items(
+                    summary_source,
+                    meeting.title,
+                    api_key=settings.anthropic_api_key,
+                    model=settings.claude_model,
+                )
+                meeting.action_items_json = json.dumps(action_items)
 
-            # Step 3: Transcribe
-            meeting.status = "transcribing"
-            db.commit()
-            with _processing_lock:
-                meeting_processing_status["current_step"] = "transcribing"
-
-            transcription = transcribe_audio(audio_path, model_size=whisper_model)
-            meeting.transcription = transcription
-
-            # Step 4: Summarize
-            meeting.status = "summarizing"
-            db.commit()
-            with _processing_lock:
-                meeting_processing_status["current_step"] = "summarizing"
-
-            meeting.executive_summary = generate_executive_summary(
-                transcription,
-                meeting.title,
-                api_key=settings.anthropic_api_key,
-                model=settings.claude_model,
-            )
-
-            action_items = extract_action_items(
-                transcription,
-                meeting.title,
-                api_key=settings.anthropic_api_key,
-                model=settings.claude_model,
-            )
-            meeting.action_items_json = json.dumps(action_items)
-
-            # Step 5: Index in ChromaDB
+            # --- Step 4: Index all chunks in ChromaDB ---
             meeting.status = "indexing"
             db.commit()
             with _processing_lock:
                 meeting_processing_status["current_step"] = "indexing"
 
-            source_url = f"council-meeting://{meeting.escribe_id}"
-            chunks = chunk_text(
-                text=transcription,
-                source_url=source_url,
-                title=f"Council Meeting: {meeting.title} ({meeting.meeting_date.strftime('%Y-%m-%d') if meeting.meeting_date else 'unknown date'})",
-                chunk_size=settings.chunk_size,
-                chunk_overlap=settings.chunk_overlap,
-            )
-            if chunks:
-                vector_store.ingest(chunks)
+            if all_chunks:
+                vector_store.ingest(all_chunks)
+                logger.info(f"Indexed {len(all_chunks)} total chunks for {meeting.title}")
 
             # Mark complete
             meeting.status = "complete"
@@ -302,7 +362,7 @@ def _process_one_meeting(
 
         finally:
             # Always clean up temp audio file
-            if os.path.exists(audio_path):
+            if audio_path and os.path.exists(audio_path):
                 os.remove(audio_path)
 
     finally:

@@ -392,7 +392,11 @@ async def list_meetings(
                     "meeting_date": m.meeting_date.isoformat() if m.meeting_date else None,
                     "status": m.status,
                     "has_video": bool(m.video_url),
+                    "has_agenda": bool(m.agenda_url),
+                    "has_minutes": bool(m.minutes_url),
                     "has_transcription": bool(m.transcription),
+                    "has_agenda_text": bool(m.agenda_text),
+                    "has_minutes_text": bool(m.minutes_text),
                     "has_summary": bool(m.executive_summary),
                     "error_message": m.error_message,
                     "processing_started_at": m.processing_started_at.isoformat() if m.processing_started_at else None,
@@ -430,11 +434,17 @@ async def get_meeting_detail(meeting_id: int):
             "meeting_type": meeting.meeting_type,
             "meeting_date": meeting.meeting_date.isoformat() if meeting.meeting_date else None,
             "video_url": meeting.video_url,
+            "agenda_url": meeting.agenda_url,
+            "minutes_url": meeting.minutes_url,
             "status": meeting.status,
             "executive_summary": meeting.executive_summary,
             "action_items": json.loads(meeting.action_items_json) if meeting.action_items_json else None,
             "transcription_preview": meeting.transcription[:2000] if meeting.transcription else None,
             "transcription_length": len(meeting.transcription) if meeting.transcription else 0,
+            "has_agenda_text": bool(meeting.agenda_text),
+            "agenda_text_length": len(meeting.agenda_text) if meeting.agenda_text else 0,
+            "has_minutes_text": bool(meeting.minutes_text),
+            "minutes_text_length": len(meeting.minutes_text) if meeting.minutes_text else 0,
             "error_message": meeting.error_message,
             "processing_started_at": meeting.processing_started_at.isoformat() if meeting.processing_started_at else None,
             "processing_completed_at": meeting.processing_completed_at.isoformat() if meeting.processing_completed_at else None,
@@ -474,16 +484,24 @@ async def discover_meetings():
                 added += 1
         db.commit()
 
+        with_video = sum(1 for m in discovered if m.video_url)
+        with_agenda = sum(1 for m in discovered if m.agenda_url)
+        with_minutes = sum(1 for m in discovered if m.minutes_url)
+
         log_audit(db, "meetings_discovered", metadata={
             "total_discovered": len(discovered),
             "new_added": added,
-            "with_video": sum(1 for m in discovered if m.video_url),
+            "with_video": with_video,
+            "with_agenda": with_agenda,
+            "with_minutes": with_minutes,
         })
 
         return {
             "total_discovered": len(discovered),
             "new_added": added,
-            "with_video": sum(1 for m in discovered if m.video_url),
+            "with_video": with_video,
+            "with_agenda": with_agenda,
+            "with_minutes": with_minutes,
         }
     finally:
         db.close()

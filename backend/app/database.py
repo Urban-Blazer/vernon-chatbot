@@ -90,6 +90,8 @@ class CouncilMeeting(Base):
     agenda_url = Column(Text, nullable=True)
     minutes_url = Column(Text, nullable=True)
     transcription = Column(Text, nullable=True)
+    agenda_text = Column(Text, nullable=True)
+    minutes_text = Column(Text, nullable=True)
     executive_summary = Column(Text, nullable=True)
     action_items_json = Column(Text, nullable=True)
     status = Column(String(20), default="pending", index=True)

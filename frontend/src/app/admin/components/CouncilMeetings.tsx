@@ -10,7 +10,11 @@ interface Meeting {
   meeting_date: string | null;
   status: string;
   has_video: boolean;
+  has_agenda: boolean;
+  has_minutes: boolean;
   has_transcription: boolean;
+  has_agenda_text: boolean;
+  has_minutes_text: boolean;
   has_summary: boolean;
   error_message: string | null;
   processing_started_at: string | null;
@@ -23,11 +27,17 @@ interface MeetingDetail {
   meeting_type: string;
   meeting_date: string | null;
   video_url: string | null;
+  agenda_url: string | null;
+  minutes_url: string | null;
   status: string;
   executive_summary: string | null;
   action_items: ActionItem[] | null;
   transcription_preview: string | null;
   transcription_length: number;
+  has_agenda_text: boolean;
+  agenda_text_length: number;
+  has_minutes_text: boolean;
+  minutes_text_length: number;
   error_message: string | null;
 }
 
@@ -66,6 +76,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 const STEP_LABELS: Record<string, string> = {
   discovering: "Discovering meetings...",
+  downloading_docs: "Downloading agenda/minutes PDFs...",
   downloading: "Downloading audio...",
   transcribing: "Transcribing audio...",
   summarizing: "Generating summary...",
@@ -127,7 +138,7 @@ export default function CouncilMeetings({ adminFetch }: Props) {
     setMessage("");
     try {
       const data = await adminFetch("/api/admin/meetings/discover", { method: "POST" });
-      setMessage(`Discovered ${data.total_discovered} meetings (${data.new_added} new, ${data.with_video} with video)`);
+      setMessage(`Discovered ${data.total_discovered} meetings (${data.new_added} new, ${data.with_video} video, ${data.with_agenda} agendas, ${data.with_minutes} minutes)`);
       loadMeetings();
     } catch (e) {
       setMessage("Discovery failed");
@@ -259,7 +270,16 @@ export default function CouncilMeetings({ adminFetch }: Props) {
                   <span className="text-sm text-gray-700 truncate flex-1">
                     {meeting.title}
                   </span>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {meeting.has_video && (
+                      <span className="text-xs text-blue-500" title="Has video">V</span>
+                    )}
+                    {meeting.has_agenda && (
+                      <span className="text-xs text-green-500" title="Has agenda PDF">A</span>
+                    )}
+                    {meeting.has_minutes && (
+                      <span className="text-xs text-purple-500" title="Has minutes PDF">M</span>
+                    )}
                     <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
                       {meeting.meeting_type}
                     </span>
@@ -268,7 +288,7 @@ export default function CouncilMeetings({ adminFetch }: Props) {
                         ? new Date(meeting.meeting_date).toLocaleDateString()
                         : ""}
                     </span>
-                    {meeting.status === "pending" && meeting.has_video && !processing?.is_running && (
+                    {meeting.status === "pending" && !processing?.is_running && (
                       <button
                         onClick={(e) => { e.stopPropagation(); processSingle(meeting.id); }}
                         className="text-xs text-blue-600 hover:text-blue-800"
@@ -338,15 +358,58 @@ export default function CouncilMeetings({ adminFetch }: Props) {
                     </div>
                   )}
 
+                  {/* Content availability summary */}
+                  <div className="flex flex-wrap gap-2">
+                    {detail.has_agenda_text && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 rounded">
+                        Agenda indexed ({detail.agenda_text_length.toLocaleString()} chars)
+                      </span>
+                    )}
+                    {detail.has_minutes_text && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 text-purple-700 rounded">
+                        Minutes indexed ({detail.minutes_text_length.toLocaleString()} chars)
+                      </span>
+                    )}
+                    {detail.transcription_length > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded">
+                        Transcription ({detail.transcription_length.toLocaleString()} chars)
+                      </span>
+                    )}
+                  </div>
+
                   {detail.transcription_preview && (
                     <div>
                       <span className="font-semibold text-gray-700 block mb-1">
-                        Transcription Preview ({detail.transcription_length.toLocaleString()} chars)
+                        Transcription Preview
                       </span>
                       <p className="text-gray-500 leading-relaxed">
                         {detail.transcription_preview.slice(0, 500)}
                         {detail.transcription_length > 500 && "..."}
                       </p>
+                    </div>
+                  )}
+
+                  {/* Source links */}
+                  {(detail.agenda_url || detail.minutes_url || detail.video_url) && (
+                    <div className="flex flex-wrap gap-2">
+                      {detail.agenda_url && (
+                        <a href={detail.agenda_url} target="_blank" rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 underline">
+                          View Agenda PDF
+                        </a>
+                      )}
+                      {detail.minutes_url && (
+                        <a href={detail.minutes_url} target="_blank" rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 underline">
+                          View Minutes PDF
+                        </a>
+                      )}
+                      {detail.video_url && (
+                        <a href={detail.video_url} target="_blank" rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 underline">
+                          View Video
+                        </a>
+                      )}
                     </div>
                   )}
 
